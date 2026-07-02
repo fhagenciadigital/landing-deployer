@@ -98,6 +98,24 @@ function copyDirectory(source, destination) {
   fs.cpSync(source, destination, { recursive: true });
 }
 
+function fixPermissions(targetDir) {
+  fs.chmodSync(targetDir, 0o755);
+
+  const items = fs.readdirSync(targetDir, {
+    withFileTypes: true
+  });
+
+  for (const item of items) {
+    const itemPath = path.join(targetDir, item.name);
+
+    if (item.isDirectory()) {
+      fixPermissions(itemPath);
+    } else if (item.isFile()) {
+      fs.chmodSync(itemPath, 0o644);
+    }
+  }
+}
+
 function deploy(site, zipName) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
@@ -176,6 +194,7 @@ function deploy(site, zipName) {
   }
 
   copyDirectory(publishDir, releaseDir);
+  fixPermissions(releaseDir);
 
   if (!fs.existsSync(path.join(releaseDir, 'index.html'))) {
     throw new Error('Release inválida: index.html não encontrado.');
