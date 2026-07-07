@@ -116,6 +116,35 @@ function fixPermissions(targetDir) {
   }
 }
 
+function archiveDeployedZip(zipPath, site, zipName, timestamp) {
+  const deployedDir = path.join(UPLOADS_DIR, site, 'deployed');
+
+  fs.mkdirSync(deployedDir, {
+    recursive: true
+  });
+
+  fs.chmodSync(deployedDir, 0o755);
+
+  const baseArchivedName = `${timestamp}-${zipName}`;
+  let archivedName = baseArchivedName;
+  let archivedPath = path.join(deployedDir, archivedName);
+  let counter = 1;
+
+  while (fs.existsSync(archivedPath)) {
+    archivedName = `${timestamp}-${counter}-${zipName}`;
+    archivedPath = path.join(deployedDir, archivedName);
+    counter += 1;
+  }
+
+  fs.renameSync(zipPath, archivedPath);
+  fs.chmodSync(archivedPath, 0o644);
+
+  return {
+    archived_name: archivedName,
+    archived_path: `/${site}/deployed/${archivedName}`
+  };
+}
+
 function deploy(site, zipName) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
@@ -215,11 +244,22 @@ function deploy(site, zipName) {
     force: true
   });
 
+  let archivedZip = null;
+  let archiveWarning = null;
+
+  try {
+    archivedZip = archiveDeployedZip(zipPath, site, zipName, timestamp);
+  } catch (error) {
+    archiveWarning = `Deploy concluído, mas não foi possível mover o ZIP para deployed/: ${error.message}`;
+  }
+
   return {
     success: true,
     site,
     domain,
     zip: zipName,
+    archived_zip: archivedZip,
+    archive_warning: archiveWarning,
     release: timestamp,
     url: `https://${domain}`
   };
