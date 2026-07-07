@@ -353,70 +353,42 @@ const server = http.createServer((req, res) => {
     });
   }
 
-  const contentType = req.headers['content-type'] || '';
+  const site = (req.headers['x-deploy-site'] || '').trim();
+  const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
 
-  // --- Binary upload mode: Content-Type application/zip ---
-  if (contentType.startsWith('application/zip') || contentType.startsWith('application/octet-stream')) {
-    const site = (req.headers['x-deploy-site'] || '').trim();
-    const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
-
-    if (!site) {
-      return json(res, 400, { success: false, error: 'Header x-deploy-site é obrigatório no modo binário.' });
-    }
-
-    const chunks = [];
-    let totalLength = 0;
-    const MAX_SIZE = 200 * 1024 * 1024; // 200 MB
-
-    req.on('data', (chunk) => {
-      totalLength += chunk.length;
-
-      if (totalLength > MAX_SIZE) {
-        req.destroy();
-        return;
-      }
-
-      chunks.push(chunk);
-    });
-
-    req.on('end', () => {
-      try {
-        const buffer = Buffer.concat(chunks);
-        saveUploadedZip(site, zipName, buffer);
-
-        const result = deploy(site, zipName);
-
-        return json(res, 200, result);
-      } catch (error) {
-        return json(res, 400, {
-          success: false,
-          error: error.message
-        });
-      }
-    });
-
-    return;
+  if (!site) {
+    return json(res, 400, { success: false, error: 'Header x-deploy-site é obrigatório.' });
   }
 
-  // --- JSON mode (default): zip_filename references an already-uploaded file ---
-  let body = '';
+  if (!isSafeSite(site)) {
+    return json(res, 400, { success: false, error: 'Nome de site inválido.' });
+  }
+
+  if (!isSafeZipName(zipName)) {
+    return json(res, 400, { success: false, error: 'Nome de ZIP inválido.' });
+  }
+
+  const chunks = [];
+  let totalLength = 0;
+  const MAX_SIZE = 200 * 1024 * 1024; // 200 MB
 
   req.on('data', (chunk) => {
-    body += chunk.toString();
+    totalLength += chunk.length;
 
-    if (body.length > 1024 * 1024) {
+    if (totalLength > MAX_SIZE) {
       req.destroy();
+      return;
     }
+
+    chunks.push(chunk);
   });
 
   req.on('end', () => {
     try {
-      const payload = JSON.parse(body || '{}');
+      const buffer = Buffer.concat(chunks);
+      saveUploadedZip(site, zipName, buffer);
 
-      const result = deploy(
-        String(payload.site || ''),
-        String(payload.zip_filename || 'site.zip')
-      );
+      const result = deploy(site, zipName);
 
       return json(res, 200, result);
     } catch (error) {
