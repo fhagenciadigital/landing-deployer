@@ -158,6 +158,56 @@ function saveUploadedZip(site, zipName, buffer) {
   return zipPath;
 }
 
+function validateVersion(srcDir, site, siteDir) {
+  const versionPath = path.join(srcDir, 'version.json');
+
+  if (!fs.existsSync(versionPath)) {
+    throw new Error('version.json não encontrado na raiz do ZIP.');
+  }
+
+  let newVersion;
+
+  try {
+    newVersion = JSON.parse(fs.readFileSync(versionPath, 'utf8'));
+  } catch {
+    throw new Error('version.json não é um JSON válido.');
+  }
+
+  if (!newVersion.site || typeof newVersion.site !== 'string') {
+    throw new Error('version.json: campo "site" (string) obrigatório.');
+  }
+
+  if (!newVersion.version || typeof newVersion.version !== 'string') {
+    throw new Error('version.json: campo "version" (string) obrigatório.');
+  }
+
+  if (newVersion.site !== site) {
+    throw new Error(
+      `version.json: site "${newVersion.site}" não coincide com o site do deploy "${site}".`
+    );
+  }
+
+  const existingVersionPath = path.join(siteDir, 'version.json');
+
+  if (fs.existsSync(existingVersionPath)) {
+    let existingVersion;
+
+    try {
+      existingVersion = JSON.parse(fs.readFileSync(existingVersionPath, 'utf8'));
+    } catch {
+      throw new Error('version.json existente no site está corrompido.');
+    }
+
+    if (newVersion.version < existingVersion.version) {
+      throw new Error(
+        `Versão "${newVersion.version}" é inferior à versão atual "${existingVersion.version}".`
+      );
+    }
+  }
+
+  return newVersion;
+}
+
 function deploy(site, zipName) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
@@ -204,6 +254,9 @@ function deploy(site, zipName) {
   run('unzip', ['-q', zipPath, '-d', extractDir]);
 
   const srcDir = getSourceDirectory(extractDir);
+
+  // --- Validate version.json from the ZIP ---
+  const versionInfo = validateVersion(srcDir, site, siteDir);
 
   let publishDir = '';
 
@@ -252,6 +305,11 @@ function deploy(site, zipName) {
   fs.symlinkSync(relativeTarget, temporaryLink);
   fs.renameSync(temporaryLink, currentLink);
 
+  // --- Save version.json to site root ---
+  const siteVersionPath = path.join(siteDir, 'version.json');
+  fs.writeFileSync(siteVersionPath, JSON.stringify(versionInfo, null, 2) + '\n');
+  fs.chmodSync(siteVersionPath, 0o644);
+
   fs.rmSync(workDir, {
     recursive: true,
     force: true
@@ -271,6 +329,7 @@ function deploy(site, zipName) {
     site,
     domain,
     zip: zipName,
+    version: versionInfo.version,
     archived_zip: archivedZip,
     archive_warning: archiveWarning,
     release: timestamp,
