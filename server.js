@@ -145,6 +145,19 @@ function archiveDeployedZip(zipPath, site, zipName, timestamp) {
   };
 }
 
+function saveUploadedZip(site, zipName, buffer) {
+  const siteUploadDir = path.join(UPLOADS_DIR, site);
+
+  fs.mkdirSync(siteUploadDir, { recursive: true });
+  fs.chmodSync(siteUploadDir, 0o755);
+
+  const zipPath = path.join(siteUploadDir, zipName);
+  fs.writeFileSync(zipPath, buffer);
+  fs.chmodSync(zipPath, 0o644);
+
+  return zipPath;
+}
+
 function deploy(site, zipName) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
@@ -287,6 +300,52 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  const contentType = req.headers['content-type'] || '';
+
+  // --- Binary upload mode: Content-Type application/zip ---
+  if (contentType.startsWith('application/zip') || contentType.startsWith('application/octet-stream')) {
+    const site = (req.headers['x-deploy-site'] || '').trim();
+    const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
+
+    if (!site) {
+      return json(res, 400, { success: false, error: 'Header x-deploy-site é obrigatório no modo binário.' });
+    }
+
+    const chunks = [];
+    let totalLength = 0;
+    const MAX_SIZE = 200 * 1024 * 1024; // 200 MB
+
+    req.on('data', (chunk) => {
+      totalLength += chunk.length;
+
+      if (totalLength > MAX_SIZE) {
+        req.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      try {
+        const buffer = Buffer.concat(chunks);
+        saveUploadedZip(site, zipName, buffer);
+
+        const result = deploy(site, zipName);
+
+        return json(res, 200, result);
+      } catch (error) {
+        return json(res, 400, {
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    return;
+  }
+
+  // --- JSON mode (default): zip_filename references an already-uploaded file ---
   let body = '';
 
   req.on('data', (chunk) => {
