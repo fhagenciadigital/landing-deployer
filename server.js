@@ -116,35 +116,6 @@ function fixPermissions(targetDir) {
   }
 }
 
-function archiveDeployedZip(zipPath, site, zipName, timestamp) {
-  const deployedDir = path.join(UPLOADS_DIR, site, 'deployed');
-
-  fs.mkdirSync(deployedDir, {
-    recursive: true
-  });
-
-  fs.chmodSync(deployedDir, 0o755);
-
-  const baseArchivedName = `${timestamp}-${zipName}`;
-  let archivedName = baseArchivedName;
-  let archivedPath = path.join(deployedDir, archivedName);
-  let counter = 1;
-
-  while (fs.existsSync(archivedPath)) {
-    archivedName = `${timestamp}-${counter}-${zipName}`;
-    archivedPath = path.join(deployedDir, archivedName);
-    counter += 1;
-  }
-
-  fs.renameSync(zipPath, archivedPath);
-  fs.chmodSync(archivedPath, 0o644);
-
-  return {
-    archived_name: archivedName,
-    archived_path: `/${site}/deployed/${archivedName}`
-  };
-}
-
 function saveUploadedZip(site, zipName, buffer) {
   const siteUploadDir = path.join(UPLOADS_DIR, site);
 
@@ -221,7 +192,6 @@ function deploy(site, zipName) {
     throw new Error(`Site não permitido: ${site}`);
   }
 
-  const domain = SITE_DOMAINS[site] || `${site}.lp.fhad.xyz`;
   const zipPath = path.join(UPLOADS_DIR, site, zipName);
 
   if (!fs.existsSync(zipPath)) {
@@ -239,6 +209,36 @@ function deploy(site, zipName) {
     .replace(/[-:]/g, '')
     .replace(/\..+/, '')
     .replace('T', '-');
+
+  // --- Wrap deploy logic to write error details on failure ---
+  try {
+    return deployInternal(site, zipName, zipPath, entries, timestamp);
+  } catch (error) {
+    const errorLogPath = zipPath + '.txt';
+    const errorDetails = [
+      `Erro no deploy — ${new Date().toISOString()}`,
+      `Site: ${site}`,
+      `ZIP: ${zipName}`,
+      `Caminho: ${zipPath}`,
+      `Release: ${timestamp}`,
+      '',
+      `Mensagem: ${error.message}`,
+      '',
+      `Stack:`,
+      error.stack || '(sem stack)'
+    ].join('\n');
+
+    try {
+      fs.writeFileSync(errorLogPath, errorDetails + '\n');
+      fs.chmodSync(errorLogPath, 0o644);
+    } catch {}
+
+    throw error;
+  }
+}
+
+function deployInternal(site, zipName, zipPath, entries, timestamp) {
+  const domain = SITE_DOMAINS[site] || `${site}.lp.fhad.xyz`;
 
   const workDir = path.join(TMP_DIR, `${site}-${timestamp}`);
   const extractDir = path.join(workDir, 'src');
@@ -315,14 +315,10 @@ function deploy(site, zipName) {
     force: true
   });
 
-  let archivedZip = null;
-  let archiveWarning = null;
-
+  // --- Delete the uploaded ZIP ---
   try {
-    archivedZip = archiveDeployedZip(zipPath, site, zipName, timestamp);
-  } catch (error) {
-    archiveWarning = `Deploy concluído, mas não foi possível mover o ZIP para deployed/: ${error.message}`;
-  }
+    fs.unlinkSync(zipPath);
+  } catch {}
 
   return {
     success: true,
@@ -330,8 +326,6 @@ function deploy(site, zipName) {
     domain,
     zip: zipName,
     version: versionInfo.version,
-    archived_zip: archivedZip,
-    archive_warning: archiveWarning,
     release: timestamp,
     url: `https://${domain}`
   };
