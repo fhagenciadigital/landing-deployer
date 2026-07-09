@@ -6,6 +6,7 @@ WORKDIR /app
 
 COPY package.json package.json
 COPY server.js server.js
+COPY version.json version.json
 
 ENV PORT=8080
 ENV UPLOADS_DIR=/data/uploads
