@@ -1,11 +1,11 @@
 meta {
-  name: backup
+  name: reset
   type: http
-  seq: 3
+  seq: 5
 }
 
 post {
-  url: {{baseUrl}}/backup
+  url: {{baseUrl}}/reset
   body: none
   auth: none
 }
@@ -13,6 +13,5 @@ post {
 headers {
   x-deploy-token: {{deployToken}}
   x-deploy-site: laminas
-  x-deploy-env: production
-}
+  x-deploy-env: testing
 }

@@ -243,35 +243,37 @@ function cleanupOldBackups() {
   }
 }
 
-function backupSite(site) {
+function backupSite(site, env) {
   if (!isSiteConfigured(site)) {
     throw new Error(`Site "${site}" não está configurado no sites.json.`);
   }
 
-  const siteDir = path.join(SITES_DIR, site);
+  const siteDir = path.join(SITES_DIR, site, env);
 
   if (!fs.existsSync(siteDir)) {
-    throw new Error(`Site "${site}" não encontrado. Nenhum deploy feito ainda.`);
+    throw new Error(`Site "${site}" (${env}) não encontrado. Nenhum deploy feito ainda.`);
   }
 
   const timestamp = generateTimestamp();
-  const backupName = `${site}-${timestamp}.tar.gz`;
+  const backupName = `${site}-${env}-${timestamp}.tar.gz`;
 
   fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 
   const backupPath = path.join(BACKUPS_DIR, backupName);
 
-  run('tar', ['-czf', backupPath, '-C', SITES_DIR, site]);
+  const envRelPath = path.join(site, env);
+  run('tar', ['-czf', backupPath, '-C', SITES_DIR, envRelPath]);
 
   return {
     success: true,
     site,
+    env,
     backup: backupName,
     path: backupPath
   };
 }
 
-function restoreSite(site, backupName) {
+function restoreSite(site, backupName, env) {
   if (!isSiteConfigured(site)) {
     throw new Error(`Site "${site}" não está configurado no sites.json.`);
   }
@@ -295,21 +297,69 @@ function restoreSite(site, backupName) {
     throw new Error(`Backup não encontrado: ${backupName}`);
   }
 
-  const siteDir = path.join(SITES_DIR, site);
+  const siteDir = path.join(SITES_DIR, site, env);
 
-  // Remover site atual
+  // Remover ambiente atual
   if (fs.existsSync(siteDir)) {
     fs.rmSync(siteDir, { recursive: true, force: true });
   }
 
-  // Extrair backup
-  run('tar', ['-xzf', backupPath, '-C', SITES_DIR]);
+  // Garantir que o diretório pai existe
+  fs.mkdirSync(path.join(SITES_DIR, site), { recursive: true });
+
+  // Extrair backup (o tar contém a pasta 'env/')
+  run('tar', ['-xzf', backupPath, '-C', path.join(SITES_DIR, site)]);
 
   return {
     success: true,
     site,
+    env,
     backup: backupName,
     restored: true
+  };
+}
+
+function resetSite(site, env) {
+  if (!isSiteConfigured(site)) {
+    throw new Error(`Site "${site}" não está configurado no sites.json.`);
+  }
+
+  const siteDir = path.join(SITES_DIR, site, env);
+  let siteRemoved = false;
+  let backupsRemoved = 0;
+
+  // Remover diretório do ambiente
+  if (fs.existsSync(siteDir)) {
+    fs.rmSync(siteDir, { recursive: true, force: true });
+    siteRemoved = true;
+  }
+
+  // Remover backups do site+ambiente
+  if (fs.existsSync(BACKUPS_DIR)) {
+    const files = fs.readdirSync(BACKUPS_DIR);
+    const prefix = `${site}-${env}-`;
+
+    for (const file of files) {
+      if (file.startsWith(prefix) && file.endsWith('.tar.gz')) {
+        const filePath = path.join(BACKUPS_DIR, file);
+        try {
+          fs.unlinkSync(filePath);
+          backupsRemoved++;
+        } catch {}
+      }
+    }
+  }
+
+  if (!siteRemoved && backupsRemoved === 0) {
+    throw new Error(`Site "${site}" (${env}) não encontrado. Nenhum deploy ou backup para remover.`);
+  }
+
+  return {
+    success: true,
+    site,
+    env,
+    siteRemoved,
+    backupsRemoved
   };
 }
 
@@ -352,6 +402,7 @@ function deploy(site, zipName, env) {
     const errorDetails = [
       `Erro no deploy — ${new Date().toISOString()}`,
       `Site: ${site}`,
+      `Env: ${env}`,
       `ZIP: ${zipName}`,
       `Caminho: ${zipPath}`,
       `Release: ${timestamp}`,
@@ -374,10 +425,10 @@ function deploy(site, zipName, env) {
 function deployInternal(site, zipName, zipPath, entries, timestamp, env) {
   const domain = getSiteHost(site, env);
 
-  const workDir = path.join(TMP_DIR, `${site}-${timestamp}`);
+  const workDir = path.join(TMP_DIR, `${site}-${env}-${timestamp}`);
   const extractDir = path.join(workDir, 'src');
 
-  const siteDir = path.join(SITES_DIR, site);
+  const siteDir = path.join(SITES_DIR, site, env);
   const releasesDir = path.join(siteDir, 'releases');
   const releaseDir = path.join(releasesDir, timestamp);
   const currentLink = path.join(siteDir, 'current');
@@ -457,6 +508,7 @@ function deployInternal(site, zipName, zipPath, entries, timestamp, env) {
   return {
     success: true,
     site,
+    env,
     domain,
     zip: zipName,
     version: versionInfo.version,
@@ -530,9 +582,12 @@ const server = http.createServer((req, res) => {
     const site = getSiteFromHeaders(req, res);
     if (!site) return;
 
+    const env = getEnvFromHeaders(req, res);
+    if (!env) return;
+
     try {
       cleanupOldBackups();
-      const result = backupSite(site);
+      const result = backupSite(site, env);
       return json(res, 200, result);
     } catch (error) {
       return json(res, 400, { success: false, error: error.message });
@@ -546,6 +601,9 @@ const server = http.createServer((req, res) => {
     const site = getSiteFromHeaders(req, res);
     if (!site) return;
 
+    const env = getEnvFromHeaders(req, res);
+    if (!env) return;
+
     const backupName = (req.headers['x-deploy-backup'] || '').trim();
 
     if (!backupName) {
@@ -553,7 +611,25 @@ const server = http.createServer((req, res) => {
     }
 
     try {
-      const result = restoreSite(site, backupName);
+      const result = restoreSite(site, backupName, env);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { success: false, error: error.message });
+    }
+  }
+
+  // --- Reset ---
+  if (req.method === 'POST' && req.url === '/reset') {
+    if (!authenticate(req, res)) return;
+
+    const site = getSiteFromHeaders(req, res);
+    if (!site) return;
+
+    const env = getEnvFromHeaders(req, res);
+    if (!env) return;
+
+    try {
+      const result = resetSite(site, env);
       return json(res, 200, result);
     } catch (error) {
       return json(res, 400, { success: false, error: error.message });

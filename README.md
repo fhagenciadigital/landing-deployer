@@ -69,11 +69,12 @@ Além do `version.json`, o ZIP deve incluir uma das seguintes opções:
 {
   "success": true,
   "site": "laminas",
-  "domain": "lp.harmonizadoraelite.com.br",
+  "env": "production",
+  "domain": "laminas.lp.fhad.xyz",
   "zip": "site.zip",
   "version": "1.0.0",
   "release": "20260709-120000",
-  "url": "https://lp.harmonizadoraelite.com.br"
+  "url": "https://laminas.lp.fhad.xyz"
 }
 ```
 
@@ -81,6 +82,7 @@ Além do `version.json`, o ZIP deve incluir uma das seguintes opções:
 |------------|---------|------------------------------------------------|
 | `success`  | boolean | Sempre `true` em caso de sucesso.              |
 | `site`     | string  | Nome do site.                                  |
+| `env`      | string  | Ambiente do deploy (`production` ou `testing`). |
 | `domain`   | string  | Domínio atribuído ao site.                     |
 | `zip`      | string  | Nome do ficheiro ZIP enviado.                  |
 | `version`  | string  | Versão extraída do `version.json`.             |
@@ -137,7 +139,8 @@ Os backups são guardados em `/data/backups` e expiram automaticamente após 5 d
 | Header           | Obrigatório | Descrição                                                                 |
 |------------------|-------------|---------------------------------------------------------------------------|
 | `x-deploy-token` | Sim         | Token de autenticação. Deve coincidir com o segredo `LANDING_DEPLOY_TOKEN`. |
-| `x-deploy-site`  | Sim         | Nome do site a fazer backup (ex.: `demo`).                                 |
+| `x-deploy-site`  | Sim         | Nome do site a fazer backup (ex.: `laminas`).                              |
+| `x-deploy-env`   | Sim         | Ambiente do site. Valores aceites: `production` ou `testing`.              |
 
 #### Respostas
 
@@ -146,9 +149,10 @@ Os backups são guardados em `/data/backups` e expiram automaticamente após 5 d
 ```json
 {
   "success": true,
-  "site": "demo",
-  "backup": "demo-20260709-120000.tar.gz",
-  "path": "/data/backups/demo-20260709-120000.tar.gz"
+  "site": "laminas",
+  "env": "production",
+  "backup": "laminas-production-20260709-120000.tar.gz",
+  "path": "/data/backups/laminas-production-20260709-120000.tar.gz"
 }
 ```
 
@@ -156,6 +160,7 @@ Os backups são guardados em `/data/backups` e expiram automaticamente após 5 d
 |-----------|---------|-------------------------------------------------------------|
 | `success` | boolean | Sempre `true` em caso de sucesso.                           |
 | `site`    | string  | Nome do site.                                               |
+| `env`     | string  | Ambiente do backup (`production` ou `testing`).              |
 | `backup`  | string  | Nome único do ficheiro de backup (usar no restore).         |
 | `path`    | string  | Caminho absoluto do ficheiro de backup no servidor.         |
 
@@ -164,7 +169,7 @@ Os backups são guardados em `/data/backups` e expiram automaticamente após 5 d
 ```json
 {
   "success": false,
-  "error": "Site \"demo\" não encontrado. Nenhum deploy feito ainda."
+  "error": "Site \"laminas\" (production) não encontrado. Nenhum deploy feito ainda."
 }
 ```
 
@@ -188,8 +193,9 @@ Restaura um site a partir de um backup criado anteriormente.
 | Header            | Obrigatório | Descrição                                                                 |
 |-------------------|-------------|---------------------------------------------------------------------------|
 | `x-deploy-token`  | Sim         | Token de autenticação. Deve coincidir com o segredo `LANDING_DEPLOY_TOKEN`. |
-| `x-deploy-site`   | Sim         | Nome do site a restaurar (ex.: `demo`).                                    |
-| `x-deploy-backup` | Sim         | Nome do ficheiro de backup (ex.: `demo-20260709-120000.tar.gz`).           |
+| `x-deploy-site`   | Sim         | Nome do site a restaurar (ex.: `laminas`).                                 |
+| `x-deploy-env`    | Sim         | Ambiente a restaurar. Valores aceites: `production` ou `testing`.          |
+| `x-deploy-backup` | Sim         | Nome do ficheiro de backup (ex.: `laminas-production-20260709-120000.tar.gz`). |
 
 #### Respostas
 
@@ -198,8 +204,9 @@ Restaura um site a partir de um backup criado anteriormente.
 ```json
 {
   "success": true,
-  "site": "demo",
-  "backup": "demo-20260709-120000.tar.gz",
+  "site": "laminas",
+  "env": "production",
+  "backup": "laminas-production-20260709-120000.tar.gz",
   "restored": true
 }
 ```
@@ -208,6 +215,7 @@ Restaura um site a partir de um backup criado anteriormente.
 |------------|---------|-----------------------------------------------|
 | `success`  | boolean | Sempre `true` em caso de sucesso.             |
 | `site`     | string  | Nome do site.                                 |
+| `env`      | string  | Ambiente restaurado (`production` ou `testing`). |
 | `backup`   | string  | Nome do backup utilizado no restauro.         |
 | `restored` | boolean | Sempre `true` em caso de sucesso.             |
 
@@ -217,6 +225,60 @@ Restaura um site a partir de um backup criado anteriormente.
 {
   "success": false,
   "error": "Backup não encontrado: demo-20260709-120000.tar.gz"
+}
+```
+
+- **401 Unauthorized** — Token inválido.
+
+```json
+{
+  "error": "Unauthorized"
+}
+```
+
+---
+
+### `POST /reset`
+
+Remove completamente um site e todos os seus backups.
+**Atenção**: esta operação é irreversível. Todos os deploys e backups do site são eliminados.
+
+#### Cabeçalhos (Headers)
+
+| Header           | Obrigatório | Descrição                                                                 |
+|------------------|-------------|---------------------------------------------------------------------------|
+| `x-deploy-token` | Sim         | Token de autenticação. Deve coincidir com o segredo `LANDING_DEPLOY_TOKEN`. |
+| `x-deploy-site`  | Sim         | Nome do site a resetar (ex.: `laminas`).                                   |
+| `x-deploy-env`   | Sim         | Ambiente a resetar. Valores aceites: `production` ou `testing`.            |
+
+#### Respostas
+
+- **200 OK** — Reset concluído com sucesso.
+
+```json
+{
+  "success": true,
+  "site": "laminas",
+  "env": "testing",
+  "siteRemoved": true,
+  "backupsRemoved": 3
+}
+```
+
+| Campo            | Tipo    | Descrição                                              |
+|------------------|---------|--------------------------------------------------------|
+| `success`        | boolean | Sempre `true` em caso de sucesso.                      |
+| `site`           | string  | Nome do site.                                          |
+| `env`            | string  | Ambiente (`production` ou `testing`).                  |
+| `siteRemoved`    | boolean | `true` se o diretório do site foi removido.            |
+| `backupsRemoved` | number  | Número de ficheiros de backup eliminados.              |
+
+- **400 Bad Request** — Erro de validação ou site não encontrado.
+
+```json
+{
+  "success": false,
+  "error": "Site \"laminas\" não encontrado. Nenhum deploy ou backup para remover."
 }
 ```
 
@@ -291,13 +353,21 @@ curl -X POST http://localhost:8080/deploy \
 # Criar backup de um site
 curl -X POST http://localhost:8080/backup \
   -H "x-deploy-token: meu-token-secreto" \
-  -H "x-deploy-site: demo"
+  -H "x-deploy-site: laminas" \
+  -H "x-deploy-env: production"
 
 # Restaurar um site a partir de um backup
 curl -X POST http://localhost:8080/restore \
   -H "x-deploy-token: meu-token-secreto" \
-  -H "x-deploy-site: demo" \
-  -H "x-deploy-backup: demo-20260709-120000.tar.gz"
+  -H "x-deploy-site: laminas" \
+  -H "x-deploy-env: production" \
+  -H "x-deploy-backup: laminas-production-20260709-120000.tar.gz"
+
+# Fazer reset completo de um site (remove deploys e backups)
+curl -X POST http://localhost:8080/reset \
+  -H "x-deploy-token: meu-token-secreto" \
+  -H "x-deploy-site: laminas" \
+  -H "x-deploy-env: testing"
 ```
 
 ## Testar com Bruno HTTP Client
