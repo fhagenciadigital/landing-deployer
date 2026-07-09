@@ -7,6 +7,8 @@ const PORT = Number(process.env.PORT || 8080);
 const UPLOADS_DIR = process.env.UPLOADS_DIR || '/data/uploads';
 const SITES_DIR = process.env.SITES_DIR || '/data/sites';
 const TMP_DIR = process.env.TMP_DIR || '/data/tmp';
+const BACKUPS_DIR = process.env.BACKUPS_DIR || '/data/backups';
+const BACKUP_RETENTION_MS = 5 * 24 * 60 * 60 * 1000; // 5 dias
 
 const ALLOWED_SITES = (process.env.ALLOWED_SITES || '')
   .split(',')
@@ -30,6 +32,17 @@ function readSecret(name, fallback = '') {
 }
 
 const DEPLOY_TOKEN = readSecret('LANDING_DEPLOY_TOKEN');
+
+// --- Load service version ---
+let SERVICE_VERSION = 'unknown';
+const VERSION_PATH = path.join(__dirname, 'version.json');
+
+try {
+  const pkg = JSON.parse(fs.readFileSync(VERSION_PATH, 'utf8'));
+  SERVICE_VERSION = pkg.version || 'unknown';
+} catch {
+  console.warn('version.json not found or invalid, using "unknown"');
+}
 
 function json(res, status, payload) {
   res.writeHead(status, {
@@ -179,6 +192,99 @@ function validateVersion(srcDir, site, siteDir) {
   return newVersion;
 }
 
+function generateTimestamp() {
+  return new Date()
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\..+/, '')
+    .replace('T', '-');
+}
+
+function cleanupOldBackups() {
+  if (!fs.existsSync(BACKUPS_DIR)) return;
+
+  const now = Date.now();
+  const cutoff = now - BACKUP_RETENTION_MS;
+
+  const files = fs.readdirSync(BACKUPS_DIR);
+
+  for (const file of files) {
+    if (!file.endsWith('.tar.gz')) continue;
+
+    const filePath = path.join(BACKUPS_DIR, file);
+    const stat = fs.statSync(filePath);
+
+    if (stat.mtimeMs < cutoff) {
+      try {
+        fs.unlinkSync(filePath);
+        console.log(`Backup expirado removido: ${file}`);
+      } catch {}
+    }
+  }
+}
+
+function backupSite(site) {
+  const siteDir = path.join(SITES_DIR, site);
+
+  if (!fs.existsSync(siteDir)) {
+    throw new Error(`Site "${site}" não encontrado. Nenhum deploy feito ainda.`);
+  }
+
+  const timestamp = generateTimestamp();
+  const backupName = `${site}-${timestamp}.tar.gz`;
+
+  fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+
+  const backupPath = path.join(BACKUPS_DIR, backupName);
+
+  run('tar', ['-czf', backupPath, '-C', SITES_DIR, site]);
+
+  return {
+    success: true,
+    site,
+    backup: backupName,
+    path: backupPath
+  };
+}
+
+function restoreSite(site, backupName) {
+  if (!isSafeSite(site)) {
+    throw new Error('Nome de site inválido.');
+  }
+
+  if (!backupName || typeof backupName !== 'string') {
+    throw new Error('Nome do backup é obrigatório.');
+  }
+
+  // Impedir path traversal no nome do backup
+  if (backupName.includes('/') || backupName.includes('..')) {
+    throw new Error('Nome de backup inválido.');
+  }
+
+  const backupPath = path.join(BACKUPS_DIR, backupName);
+
+  if (!fs.existsSync(backupPath)) {
+    throw new Error(`Backup não encontrado: ${backupName}`);
+  }
+
+  const siteDir = path.join(SITES_DIR, site);
+
+  // Remover site atual
+  if (fs.existsSync(siteDir)) {
+    fs.rmSync(siteDir, { recursive: true, force: true });
+  }
+
+  // Extrair backup
+  run('tar', ['-xzf', backupPath, '-C', SITES_DIR]);
+
+  return {
+    success: true,
+    site,
+    backup: backupName,
+    restored: true
+  };
+}
+
 function deploy(site, zipName) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
@@ -204,11 +310,7 @@ function deploy(site, zipName) {
     throw new Error('ZIP contém caminhos inseguros.');
   }
 
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\..+/, '')
-    .replace('T', '-');
+  const timestamp = generateTimestamp();
 
   // --- Wrap deploy logic to write error details on failure ---
   try {
@@ -331,38 +433,91 @@ function deployInternal(site, zipName, zipPath, entries, timestamp) {
   };
 }
 
-const server = http.createServer((req, res) => {
-  if (req.method === 'GET' && req.url === '/health') {
-    return json(res, 200, {
-      ok: true,
-      service: 'landing-deployer'
-    });
-  }
-
-  if (req.method !== 'POST' || req.url !== '/deploy') {
-    return json(res, 404, {
-      error: 'Not found'
-    });
-  }
-
+function authenticate(req, res) {
   const token = req.headers['x-deploy-token'];
 
   if (!DEPLOY_TOKEN || token !== DEPLOY_TOKEN) {
-    return json(res, 401, {
-      error: 'Unauthorized'
-    });
+    json(res, 401, { error: 'Unauthorized' });
+    return false;
   }
 
+  return true;
+}
+
+function getSiteFromHeaders(req, res) {
   const site = (req.headers['x-deploy-site'] || '').trim();
-  const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
 
   if (!site) {
-    return json(res, 400, { success: false, error: 'Header x-deploy-site é obrigatório.' });
+    json(res, 400, { success: false, error: 'Header x-deploy-site é obrigatório.' });
+    return null;
   }
 
   if (!isSafeSite(site)) {
-    return json(res, 400, { success: false, error: 'Nome de site inválido.' });
+    json(res, 400, { success: false, error: 'Nome de site inválido.' });
+    return null;
   }
+
+  return site;
+}
+
+const server = http.createServer((req, res) => {
+  // --- Health check ---
+  if (req.method === 'GET' && req.url === '/health') {
+    return json(res, 200, {
+      ok: true,
+      service: 'landing-deployer',
+      version: SERVICE_VERSION
+    });
+  }
+
+  // --- Backup ---
+  if (req.method === 'POST' && req.url === '/backup') {
+    if (!authenticate(req, res)) return;
+
+    const site = getSiteFromHeaders(req, res);
+    if (!site) return;
+
+    try {
+      cleanupOldBackups();
+      const result = backupSite(site);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { success: false, error: error.message });
+    }
+  }
+
+  // --- Restore ---
+  if (req.method === 'POST' && req.url === '/restore') {
+    if (!authenticate(req, res)) return;
+
+    const site = getSiteFromHeaders(req, res);
+    if (!site) return;
+
+    const backupName = (req.headers['x-deploy-backup'] || '').trim();
+
+    if (!backupName) {
+      return json(res, 400, { success: false, error: 'Header x-deploy-backup é obrigatório.' });
+    }
+
+    try {
+      const result = restoreSite(site, backupName);
+      return json(res, 200, result);
+    } catch (error) {
+      return json(res, 400, { success: false, error: error.message });
+    }
+  }
+
+  // --- Deploy ---
+  if (req.method !== 'POST' || req.url !== '/deploy') {
+    return json(res, 404, { error: 'Not found' });
+  }
+
+  if (!authenticate(req, res)) return;
+
+  const site = getSiteFromHeaders(req, res);
+  if (!site) return;
+
+  const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
 
   if (!isSafeZipName(zipName)) {
     return json(res, 400, { success: false, error: 'Nome de ZIP inválido.' });
@@ -388,6 +543,7 @@ const server = http.createServer((req, res) => {
       const buffer = Buffer.concat(chunks);
       saveUploadedZip(site, zipName, buffer);
 
+      cleanupOldBackups();
       const result = deploy(site, zipName);
 
       return json(res, 200, result);
