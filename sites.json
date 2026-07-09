@@ -2,10 +2,10 @@
   {
     "name": "laminas",
     "production": {
-      "host": "lp.harmonizadoraelite.com.br"
+      "host": "laminas.lp.fhad.xyz"
     },
     "testing": {
-      "host": "test.lp.harmonizadoraelite.com.br"
+      "host": "test.laminas.lp.fhad.xyz"
     }
   }
 ]
