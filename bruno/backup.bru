@@ -1,0 +1,16 @@
+meta {
+  name: backup
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/backup
+  body: none
+  auth: none
+}
+
+headers {
+  x-deploy-token: {{deployToken}}
+  x-deploy-site: laminas
+}

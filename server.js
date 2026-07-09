@@ -15,11 +15,31 @@ const ALLOWED_SITES = (process.env.ALLOWED_SITES || '')
   .map((site) => site.trim())
   .filter(Boolean);
 
-const SITE_DOMAINS = {
-  demo: 'demo.lp.fhad.xyz',
-  laminas: 'lp.harmonizadoraelite.com.br',
-  adaa: 'lp.adaa.com.pt'
-};
+// --- Load sites configuration ---
+let SITES_CONFIG = [];
+const SITES_JSON_PATH = path.join(__dirname, 'sites.json');
+
+try {
+  SITES_CONFIG = JSON.parse(fs.readFileSync(SITES_JSON_PATH, 'utf8'));
+  console.log(`sites.json loaded: ${SITES_CONFIG.length} site(s) configured`);
+} catch {
+  console.warn('sites.json not found or invalid, using fallback (no sites configured)');
+}
+
+function getSiteHost(site, env) {
+  const entry = SITES_CONFIG.find((s) => s.name === site);
+
+  if (entry && entry[env] && entry[env].host) {
+    return entry[env].host;
+  }
+
+  // Fallback: <site>.lp.fhad.xyz
+  return `${site}.lp.fhad.xyz`;
+}
+
+function isSiteConfigured(site) {
+  return SITES_CONFIG.some((s) => s.name === site);
+}
 
 function readSecret(name, fallback = '') {
   const secretPath = `/run/secrets/${name}`;
@@ -224,6 +244,10 @@ function cleanupOldBackups() {
 }
 
 function backupSite(site) {
+  if (!isSiteConfigured(site)) {
+    throw new Error(`Site "${site}" não está configurado no sites.json.`);
+  }
+
   const siteDir = path.join(SITES_DIR, site);
 
   if (!fs.existsSync(siteDir)) {
@@ -248,6 +272,10 @@ function backupSite(site) {
 }
 
 function restoreSite(site, backupName) {
+  if (!isSiteConfigured(site)) {
+    throw new Error(`Site "${site}" não está configurado no sites.json.`);
+  }
+
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
   }
@@ -285,13 +313,17 @@ function restoreSite(site, backupName) {
   };
 }
 
-function deploy(site, zipName) {
+function deploy(site, zipName, env) {
   if (!isSafeSite(site)) {
     throw new Error('Nome de site inválido.');
   }
 
   if (!isSafeZipName(zipName)) {
     throw new Error('Nome de ZIP inválido. Usa apenas letras, números, ponto, hífen e underscore.');
+  }
+
+  if (!isSiteConfigured(site)) {
+    throw new Error(`Site "${site}" não está configurado no sites.json.`);
   }
 
   if (ALLOWED_SITES.length > 0 && !ALLOWED_SITES.includes(site)) {
@@ -314,7 +346,7 @@ function deploy(site, zipName) {
 
   // --- Wrap deploy logic to write error details on failure ---
   try {
-    return deployInternal(site, zipName, zipPath, entries, timestamp);
+    return deployInternal(site, zipName, zipPath, entries, timestamp, env);
   } catch (error) {
     const errorLogPath = zipPath + '.txt';
     const errorDetails = [
@@ -339,8 +371,8 @@ function deploy(site, zipName) {
   }
 }
 
-function deployInternal(site, zipName, zipPath, entries, timestamp) {
-  const domain = SITE_DOMAINS[site] || `${site}.lp.fhad.xyz`;
+function deployInternal(site, zipName, zipPath, entries, timestamp, env) {
+  const domain = getSiteHost(site, env);
 
   const workDir = path.join(TMP_DIR, `${site}-${timestamp}`);
   const extractDir = path.join(workDir, 'src');
@@ -457,7 +489,28 @@ function getSiteFromHeaders(req, res) {
     return null;
   }
 
+  if (!isSiteConfigured(site)) {
+    json(res, 400, { success: false, error: `Site "${site}" não está configurado no sites.json.` });
+    return null;
+  }
+
   return site;
+}
+
+function getEnvFromHeaders(req, res) {
+  const env = (req.headers['x-deploy-env'] || '').trim().toLowerCase();
+
+  if (!env) {
+    json(res, 400, { success: false, error: 'Header x-deploy-env é obrigatório. Valores aceites: "production" ou "testing".' });
+    return null;
+  }
+
+  if (env !== 'production' && env !== 'testing') {
+    json(res, 400, { success: false, error: 'Header x-deploy-env inválido. Valores aceites: "production" ou "testing".' });
+    return null;
+  }
+
+  return env;
 }
 
 const server = http.createServer((req, res) => {
@@ -517,6 +570,9 @@ const server = http.createServer((req, res) => {
   const site = getSiteFromHeaders(req, res);
   if (!site) return;
 
+  const env = getEnvFromHeaders(req, res);
+  if (!env) return;
+
   const zipName = (req.headers['x-deploy-filename'] || 'site.zip').trim();
 
   if (!isSafeZipName(zipName)) {
@@ -544,7 +600,7 @@ const server = http.createServer((req, res) => {
       saveUploadedZip(site, zipName, buffer);
 
       cleanupOldBackups();
-      const result = deploy(site, zipName);
+      const result = deploy(site, zipName, env);
 
       return json(res, 200, result);
     } catch (error) {

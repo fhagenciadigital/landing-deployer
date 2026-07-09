@@ -1,0 +1,11 @@
+[
+  {
+    "name": "laminas",
+    "production": {
+      "host": "lp.harmonizadoraelite.com.br"
+    },
+    "testing": {
+      "host": "test.lp.harmonizadoraelite.com.br"
+    }
+  }
+]

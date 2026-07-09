@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "landing-deployer",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

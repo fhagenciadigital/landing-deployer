@@ -31,7 +31,8 @@ Faz o deploy de uma landing page enviada como ficheiro ZIP no corpo do pedido.
 | Header               | Obrigatório | Padrão     | Descrição                                                                 |
 |----------------------|-------------|------------|---------------------------------------------------------------------------|
 | `x-deploy-token`     | Sim         | —          | Token de autenticação. Deve coincidir com o segredo `LANDING_DEPLOY_TOKEN`. |
-| `x-deploy-site`      | Sim         | —          | Nome do site a publicar (ex.: `demo`). Deve ser alfanumérico com hífens (3–64 caracteres). |
+| `x-deploy-site`      | Sim         | —          | Nome do site a publicar (ex.: `laminas`). Deve ser alfanumérico com hífens (3–64 caracteres). |
+| `x-deploy-env`       | Sim         | —          | Ambiente de deploy. Valores aceites: `production` ou `testing`.            |
 | `x-deploy-filename`  | Não         | `site.zip` | Nome do ficheiro ZIP enviado. Apenas letras, números, `.`, `-` e `_`.     |
 
 #### Corpo (Body)
@@ -45,7 +46,7 @@ O ZIP deve conter na raiz um ficheiro `version.json` com a seguinte estrutura:
 
 ```json
 {
-  "site": "demo",
+  "site": "laminas",
   "version": "1.0.0"
 }
 ```
@@ -67,12 +68,12 @@ Além do `version.json`, o ZIP deve incluir uma das seguintes opções:
 ```json
 {
   "success": true,
-  "site": "demo",
-  "domain": "demo.lp.fhad.xyz",
+  "site": "laminas",
+  "domain": "lp.harmonizadoraelite.com.br",
   "zip": "site.zip",
   "version": "1.0.0",
   "release": "20260709-120000",
-  "url": "https://demo.lp.fhad.xyz"
+  "url": "https://lp.harmonizadoraelite.com.br"
 }
 ```
 
@@ -97,7 +98,10 @@ Além do `version.json`, o ZIP deve incluir uma das seguintes opções:
 
 Exemplos de erros:
 - `Header x-deploy-site é obrigatório.`
+- `Header x-deploy-env é obrigatório. Valores aceites: "production" ou "testing".`
+- `Header x-deploy-env inválido. Valores aceites: "production" ou "testing".`
 - `Nome de site inválido.`
+- `Site "X" não está configurado no sites.json.`
 - `Nome de ZIP inválido.`
 - `version.json não encontrado na raiz do ZIP.`
 - `Versão "X" é inferior à versão atual "Y".`
@@ -232,19 +236,35 @@ Restaura um site a partir de um backup criado anteriormente.
 | `UPLOADS_DIR`         | `/data/uploads`   | Diretório onde os ZIPs enviados são guardados temporariamente.            |
 | `SITES_DIR`           | `/data/sites`     | Diretório raiz onde os sites são publicados.                              |
 | `TMP_DIR`             | `/data/tmp`       | Diretório temporário para extração e build.                               |
-| `ALLOWED_SITES`       | (vazio)           | Lista de sites permitidos, separados por vírgula. Se vazio, todos são permitidos. |
+| `ALLOWED_SITES`       | (vazio)           | Lista adicional de sites permitidos, separados por vírgula. Se definida, o site também tem de estar nesta lista (além de estar configurado no `sites.json`). Se vazio, todos os sites do `sites.json` são permitidos. |
 | `BACKUPS_DIR`         | `/data/backups`   | Diretório onde os backups são guardados.                                           |
 | `LANDING_DEPLOY_TOKEN`| (obrigatório)     | Token de autenticação para os endpoints. Pode ser definido via environment ou Docker secret (`/run/secrets/LANDING_DEPLOY_TOKEN`). |
 
-## Domínios pré-configurados
+## Sites e domínios
 
-| Site       | Domínio                            |
-|------------|------------------------------------|
-| `demo`     | `demo.lp.fhad.xyz`                |
-| `laminas`  | `lp.harmonizadoraelite.com.br`    |
-| `adaa`     | `lp.adaa.com.pt`                  |
+Os sites válidos e respetivos domínios de produção e testing são definidos no ficheiro [`sites.json`](./sites.json) na raiz do projeto.
 
-Para sites não listados, o domínio segue o padrão `<site>.lp.fhad.xyz`.
+Cada entrada tem o seguinte formato:
+
+```json
+{
+  "name": "laminas",
+  "production": {
+    "host": "lp.harmonizadoraelite.com.br"
+  },
+  "testing": {
+    "host": "test.lp.harmonizadoraelite.com.br"
+  }
+}
+```
+
+| Campo              | Descrição                                    |
+|--------------------|----------------------------------------------|
+| `name`             | Nome do site (usado no header `x-deploy-site`). |
+| `production.host`  | Domínio de produção do site.                  |
+| `testing.host`     | Domínio de testing do site.                   |
+
+Para sites não listados no `sites.json`, o domínio segue o padrão `<site>.lp.fhad.xyz`.
 
 ## Exemplo de utilização
 
@@ -252,10 +272,19 @@ Para sites não listados, o domínio segue o padrão `<site>.lp.fhad.xyz`.
 # Health check
 curl http://localhost:8080/health
 
-# Deploy de um site estático
+# Deploy de um site estático (produção)
 curl -X POST http://localhost:8080/deploy \
   -H "x-deploy-token: meu-token-secreto" \
-  -H "x-deploy-site: demo" \
+  -H "x-deploy-site: laminas" \
+  -H "x-deploy-env: production" \
+  -H "x-deploy-filename: site.zip" \
+  --data-binary @site.zip
+
+# Deploy de um site estático (testing)
+curl -X POST http://localhost:8080/deploy \
+  -H "x-deploy-token: meu-token-secreto" \
+  -H "x-deploy-site: laminas" \
+  -H "x-deploy-env: testing" \
   -H "x-deploy-filename: site.zip" \
   --data-binary @site.zip
 
@@ -269,4 +298,33 @@ curl -X POST http://localhost:8080/restore \
   -H "x-deploy-token: meu-token-secreto" \
   -H "x-deploy-site: demo" \
   -H "x-deploy-backup: demo-20260709-120000.tar.gz"
+```
+
+## Testar com Bruno HTTP Client
+
+O projeto inclui uma coleção de pedidos pronta a importar no [Bruno](https://www.usebruno.com/).
+
+### Importar a coleção
+
+1. Abre o Bruno
+2. Clica em **Import Collection**
+3. Escolhe a opção **Bruno Collection** e seleciona a pasta `bruno/` do projeto
+
+### Configurar o ambiente
+
+1. No Bruno, seleciona o environment **local** no canto superior direito
+2. Clica em **Configure** e define:
+   - `baseUrl` — URL do serviço (padrão: `http://localhost:8080`)
+   - `deployToken` — token de autenticação (campo secreto)
+
+### Pedidos disponíveis
+
+| Pedido    | Método | Endpoint   | Descrição                    |
+|-----------|--------|------------|------------------------------|
+| health    | GET    | `/health`  | Verificar se o serviço está ativo |
+| deploy    | POST   | `/deploy`  | Fazer deploy de um site (requer body binário com o ZIP) |
+| backup    | POST   | `/backup`  | Criar backup de um site      |
+| restore   | POST   | `/restore` | Restaurar um site a partir de um backup |
+
+> **Nota**: Para o pedido `deploy`, seleciona o separador **Body** no Bruno, escolhe **Binary File** e carrega o ficheiro ZIP.
 ```

@@ -1,0 +1,18 @@
+meta {
+  name: deploy
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/deploy
+  body: none
+  auth: none
+}
+
+headers {
+  x-deploy-token: {{deployToken}}
+  x-deploy-site: laminas
+  x-deploy-env: production
+  x-deploy-filename: site.zip
+}
